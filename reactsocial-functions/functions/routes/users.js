@@ -172,6 +172,13 @@ exports.imageUpload = (req,res) => {
     let imageToUpload = {};
 
     busboy.on('file', (fieldname, file, filename, encoding, mimetype) => {
+
+        //Make sure image uploaded 
+        if(mimetype != 'image/jpeg' && mimetype != 'image/png')
+        {
+            return res.status(400).json({ error: 'incorrect file type'});
+        }
+
         //split on . and get last item 
         const extension = filename.split('.')[filename.split('.').length -1]
         imageName = `${Math.round(random()*1000000000)}.${extension}`;//Give random name
@@ -208,4 +215,6 @@ exports.imageUpload = (req,res) => {
             return res.status(500).json({error: error.code})
         })
     })
+
+    busboy.end(req.rawBody);
 }
