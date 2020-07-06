@@ -1,8 +1,9 @@
 const { admin, db} = require('../util/admin');
-const {validateSignupData, validateLoginData} = require("../util/validator");
+const {validateSignupData, validateLoginData, reduceUserDetails} = require("../util/validator");
 const firebase = require('firebase');
 const config = require('../util/config');
 const { error } = require('console');
+const { user } = require('firebase-functions/lib/providers/auth');
 
 firebase.initializeApp(config);
 
@@ -114,6 +115,51 @@ exports.login = (req,res) => {
         })
 }
 
+//Add user details
+exports.addUserDetails = (req,res) => {
+    let userDetails = reduceUserDetails(req.body);
+
+    db.doc(`/users/${req.user.handle}`).update(userDetails)
+    .then(() => {
+        return res.json({message: 'User details added'})
+    })
+    .catch(err => {
+        console.error(err);
+        return res.status(500).json({error: err.code})
+    })
+}
+
+//Get own user details 
+exports.getUserDetails = (req,res) => {
+    let userData = {};
+
+    db.doc(`users/${req.user.handle}`).get()
+    .then((doc) => {
+        
+        //Check if document exists
+        if(doc.exists)
+        {
+            userData.credentials = doc.data();
+            return db.collection('likes').where('userHandle', '==', req.user.handle).get();
+        }
+    })
+    .then(data => {
+        userData.likes = [];
+        
+        data.forEach(doc => {
+            userData.likes.push(doc.data());
+        })
+
+        return res.json(userData);
+    })
+    .catch(err => {
+        console.error(err);
+        return res.status(500).json({error: err.code})
+    })
+
+}
+
+//Upload profile image
 exports.imageUpload = (req,res) => {
     const BusBoy = require('busboy');
     const path = require('path');
