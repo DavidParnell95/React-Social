@@ -1,2 +1,2 @@
 # React-Social
- Social media site using React and Firebase
+ Social media site similar in nature to Twitter. Built using React, Redux and Firebase.
