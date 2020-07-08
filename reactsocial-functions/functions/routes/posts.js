@@ -1,8 +1,4 @@
 const { admin , db } = require('../util/admin');
-const BusBoy = require('busboy');
-const path = require('path');
-const os = require('os');
-const fs = require('fs');
 const config = require('../util/config');
 
 //Get all posts
@@ -93,47 +89,41 @@ exports.getPost = (req,res) => {
     });
 };
 
-let imageFilename;
-let imageToBeUploaded = {};
+//Comment on post
+exports.commentOnPost = (req, res) => {
+    if(req.body.body.trim() === '')
+    {
+        return res.status(400).jsopn({comment: "Must not be empty "})
+    }
 
-exports.imageUpload = (req,res) => {
-    const busboy = new BusBoy({headers: req.headers});
-    
-    busboy.on('file', (fieldname, file, filename, encoding, mimetype) => {
-        //Split file name on . 
-        const extension = filename.split('.')[filename.split('.').length -1];
-        imageFilename = `${Math.round(Math.random()*100000000)}.${extension}`;
+    //Object storing comment and commenter info
+    const newComment = {
+        body: req.body.body,
+        createdAt: new Date().toISOString(),
+        postID: req.params.postID,
+        userHandle: req.user.handle,
+        userImage: req.user.imageUrl
+    };
+    console.log(newComment);
 
-        const filepath = path.join(os.tmpdir(), imageFilename);
-        imageToBeUploaded = { filepath, mimetype}
-        
-        console.log("fieldname: " + fieldname + "\n filename: " + filename + "\n mimetype: " +mimetype)
-
-        //Creates the file
-        file.pipe(fs.createWriteStream(filepath))
-    });
-
-    //uploads the file 
-    busboy.on('finish', () => {
-        admin.storage().bucket().upload(imageToBeUploaded, filepath), {
-            resumable: false,
-            metadata: {
-                metadata: {
-                    contenType: imageToBeUploaded.mimetype
-                }
-            }
+    db.doc(`posts/${req.params.postID}`).get().then((doc) => {
+        if(!doc.exists)
+        {
+            return res.status(400).json({error: "Post not found"})
         }
+
+        //Update comment count on post
+        return doc.ref.update({commentCount: doc.data().commentCount +1});
     }).then(() =>{
-        const imageURL = `https://firebasestorage.googleapis.com/v0/b/${config.storageBucket}/o/${imageFilename}?alt=media`
-        return db.doc(`/users/${req.user.handle}`).update({imageURL})
+        //Add to comment collection
+        return db.collection('comments').add(newComment);
     }).then(() =>{
-        return res.json({message: "image uploaded"})
-    })
-    .catch(err =>{
-        console.error(err);
-        return res.status(500).json({error: err.code});
-    })
-}
+        res.json(newComment);
+    }).catch((err) => {
+        console.log(err);
+        return res.status(500).json({error: "Something messed up"})
+    });
+};
 
 //Like post
 exports.likePost = (req, res) => {
@@ -181,7 +171,48 @@ exports.likePost = (req, res) => {
         console.error(err);
         res.status(500).json({ error: err.code });
       });
-  };
+};
+
+//Unlike post
+exports.unlikePost = (req,res) => {
+    const likedDocument = db.collection('likes')
+    .where('userHandle',"==",req.user.handle)
+    .where("postID","==",req.params.postID)
+    .limit(1);
+
+    const postDocument = db.doc(`/posts/${req.params.postID}`);
+    let postData;
+
+    postDocument.get().then((doc) =>{
+        if(doc.exists)
+        {
+            postData = doc.data();
+            postData.postID = doc.id;
+            return likedDocument.get();
+        }
+        //No post found
+        else{
+            return res.status(404).json({error: "Post not found"});
+        }
+    }).then((data) => {
+        //If data is empty
+        if(data.empty)
+        {
+            return res.status(400).json({error: 'Post not liked'})
+        }
+        else{
+            return db.doc(`/likes/${data.docs[0].id}`).delete().then(() =>{
+                postData.likeCount--;
+                return postData.update({likeCount: postData.likeCount});
+            }).then(()=>{
+                res.json(postData);
+            });
+        }
+    }).catch((err) => {
+        console.error(err);
+        res.status(500).json({error: err.code});
+    });
+};
 
 //Delete post
 exports.deletePost = (res,req) => {

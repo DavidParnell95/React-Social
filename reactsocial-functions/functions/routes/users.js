@@ -1,9 +1,14 @@
 const { admin, db} = require('../util/admin');
 const {validateSignupData, validateLoginData, reduceUserDetails} = require("../util/validator");
-const firebase = require('firebase');
-const config = require('../util/config');
 const { error } = require('console');
 const { user } = require('firebase-functions/lib/providers/auth');
+const BusBoy = require('busboy');
+const path = require('path');
+const os = require('os');
+const fs = require('fs');
+
+const firebase = require('firebase');
+const config = require('../util/config');
 
 firebase.initializeApp(config);
 
@@ -41,6 +46,7 @@ exports.signUp = (req,res) => {
             return firebase.auth()
             .createUserWithEmailAndPassword(newUser.email,newUser.password)
             .then(data =>{
+                userId = data.user.uid;
                 return data.user.getIdToken();
             })
             .then(idToken => {
@@ -66,14 +72,14 @@ exports.signUp = (req,res) => {
                 console.error(err);
 
                 //If email exists error 
-                if(err.code === 'auth/email-aleardy-in-user')
+                if(err.code === 'auth/email-aleardy-in-use')
                 {
-                    return res.status(500).json({ email: 'Email is already in user'});
+                    return res.status(500).json({ email: 'Email is already in use'});
                 }
 
                 //Everything else
                 else{
-                    return res.status(500).json({error: err.code});
+                    return res.status(500).json({general: "something messed up, please try again"});
                 }
                 
             })
@@ -103,15 +109,9 @@ exports.login = (req,res) => {
             return data.getIdToken();
         }).then(token => {
             return res.json({ token })
-        }).catch(err => {
-            if(err.code === 'auth/wrong-password')
-            {
-                return res.status(403).json({general: 'Wrong credentials, try again'})
-            }
-
-            else{
-                return res.status(500).json({ error: err.code })
-            }
+        }).catch((err) => {
+            console.error(err);
+           return res.status(403).json({general: 'Wrong credentials, try again'})
         })
 }
 
@@ -150,21 +150,92 @@ exports.getUserDetails = (req,res) => {
             userData.likes.push(doc.data());
         })
 
-        return res.json(userData);
+        return db
+        .collection("notifications")
+        .where("recipient", "==", req.user.handle)
+        .orderBy("createdAt", "desc")
+        .limit(10)
+        .get();
     })
-    .catch(err => {
+    .then((data) => {
+      userData.notifications = [];
+      data.forEach((doc) => {
+        userData.notifications.push({
+          recipient: doc.data().recipient,
+          sender: doc.data().sender,
+          createdAt: doc.data().createdAt,
+          postID: doc.data().postID,
+          type: doc.data().type,
+          read: doc.data().read,
+          notificationId: doc.id,
+        });
+      });
+      return res.json(userData);
+    })
+    .catch((err) => {
+      console.error(err);
+      return res.status(500).json({ error: err.code });
+    });
+};
+
+//Get other uses details 
+exports.getOtherUserDetails = (req,res) => {
+    let userData = {};
+
+    db.doc(`/users/${req.params.handle}`).get().then((doc) =>{
+        if(doc.exists)
+        {
+            userData.user = doc.data();
+            
+            return db.collection("posts")
+            .where("userHandle","==",req.params.handle)
+            .orderBy("createdAt","desc").get();
+        }
+        else
+        {
+            return res.status(404).json({error: "user not found"})
+        }
+    }).then((data) =>{
+        userData.posts = [];
+        data.forEach((doc) =>{
+            userData.posts.push({
+                body: doc.data().body,
+                createdAt: doc.data().createdAt,
+                userHandle: doc.data().userHandle,
+                userImage: doc.data().userImage,
+                likeCount: doc.data().likeCount,
+                commentCount: doc.data().commentCount,
+                postID: doc.id,
+            });
+        });
+
+        return res.json(userData);
+    }).catch((err) =>{
+        console.error(err);
+        return res.status(500).json({error: err.code});
+    });
+};
+
+//Notifications marked as read
+exports.markNotificationsRead = (req,res) => {
+    let batch = db.batch();
+
+    req.body.forEach((notificationId)=>{
+        const notification = db.doc(`/notifications/${notificationID}`);
+        batch.update(notification, {read:true});
+    });
+
+    batch.commit().then(() => {
+        return res.json({message: "notifications cleared"})
+    })
+    .catch((err) => {
         console.error(err);
         return res.status(500).json({error: err.code})
-    })
-
+    });
 }
 
 //Upload profile image
 exports.imageUpload = (req,res) => {
-    const BusBoy = require('busboy');
-    const path = require('path');
-    const os = require('os');
-    const fs = require('fs')
 
     const busboy = new BusBoy({headers: req.headers});
 
